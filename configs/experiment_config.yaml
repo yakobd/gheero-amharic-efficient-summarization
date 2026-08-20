@@ -1,0 +1,64 @@
+# Single source of truth for the amharic-efficient-summarization project.
+# All src/ scripts read their parameters from this file via utils.load_config().
+
+project:
+  name: amharic-efficient-summarization
+  seed: 42
+
+data:
+  dataset_name: csebuetnlp/xlsum
+  language_config: amharic
+  raw_dir: data/raw
+  processed_dir: data/processed
+  subsets_dir: data/subsets
+  min_article_words: 20
+  max_article_words: 400
+  # XL-Sum ships predefined train/validation/test splits; these ratios
+  # are recorded for reference only and are not used to re-split the data.
+  train_split_ratio: 0.8
+  val_split_ratio: 0.1
+  test_split_ratio: 0.1
+
+model:
+  base_model: google/mt5-small
+  max_input_length: 512
+  max_target_length: 128
+
+quality_scoring:
+  # Q1: learnability score from a pretrained (not fine-tuned) reference model.
+  reference_model: google/mt5-small
+  loss_lower_percentile: 20
+  loss_upper_percentile: 80
+  # Q2: minimum article/summary overlap-compression signal to keep a pair.
+  min_overlap_score: 0.15
+
+diversity_clustering:
+  # D1: embed articles with LaBSE, k-means cluster, sample proportionally.
+  embedding_model: sentence-transformers/LaBSE
+  n_clusters: 20
+  random_state: 42
+
+experiment_matrix:
+  subset_sizes: [0.25, 0.50]
+  conditions: [random, quality_only, diversity_only, combined]
+  include_full_dataset_ceiling: true
+
+training:
+  num_train_epochs: 6
+  batch_size: 8
+  learning_rate: 5.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  fp16: true
+  save_strategy: epoch
+  eval_strategy: epoch
+
+evaluation:
+  metrics: [rouge1, rouge2, rougeL]
+  generation_max_length: 128
+  generation_num_beams: 4
+
+paths:
+  results_metrics: results/metrics
+  results_logs: results/logs
+  results_figures: results/figures
