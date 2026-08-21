@@ -8,11 +8,45 @@ Generates summaries on data/processed/test.jsonl with the checkpoint from
 train.py, scores them with ROUGE-1/2/L (config["evaluation"]["metrics"]),
 and logs the results via utils.ExperimentLogger so every run lands in
 results/metrics/all_runs_summary.csv for cross-run comparison.
-
-Scaffolding only for Phase 3 — implemented in Phase 4/5.
 """
 
 import argparse
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+from utils import PROJECT_ROOT, ExperimentLogger, load_config
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+SUMMARIZE_PREFIX = "summarize: "
+
+
+def _import_hf_evaluate():
+    """Import the pip `evaluate` package without self-shadowing.
+
+    Running `python src/evaluate.py` puts this file's own directory first on
+    sys.path, so a plain `import evaluate` resolves to this file itself
+    (also named evaluate.py) instead of the installed HF `evaluate` library.
+    Drop this file's directory from sys.path for the duration of the import.
+    """
+    src_dir = os.path.dirname(os.path.abspath(__file__))
+    sys.modules.pop("evaluate", None)
+    original_path = sys.path
+    sys.path = [p for p in original_path if os.path.abspath(p or os.getcwd()) != src_dir]
+    try:
+        import evaluate as hf_evaluate_module
+    finally:
+        sys.path = original_path
+    return hf_evaluate_module
+
+
+hf_evaluate = _import_hf_evaluate()
 
 
 def load_test_set(processed_dir: str) -> list[dict]:
@@ -24,7 +58,9 @@ def load_test_set(processed_dir: str) -> list[dict]:
     Returns:
         List of {id, article, summary} dicts to evaluate against.
     """
-    raise NotImplementedError("Implemented in Phase 4/5")
+    path = Path(processed_dir) / "test.jsonl"
+    with open(path, "r", encoding="utf-8") as f:
+        return [json.loads(line) for line in f]
 
 
 def generate_summaries(test_examples: list[dict], checkpoint_dir: str, config: dict) -> list[str]:
@@ -42,7 +78,29 @@ def generate_summaries(test_examples: list[dict], checkpoint_dir: str, config: d
     Returns:
         A list of generated summary strings, aligned with `test_examples`.
     """
-    raise NotImplementedError("Implemented in Phase 4/5")
+    eval_cfg = config["evaluation"]
+    model_cfg = config["model"]
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint_dir)
+    model = AutoModelForSeq2SeqLM.from_pretrained(checkpoint_dir)
+    model.eval()
+
+    predictions = []
+    for example in test_examples:
+        inputs = tokenizer(
+            SUMMARIZE_PREFIX + example["article"],
+            max_length=model_cfg["max_input_length"],
+            truncation=True,
+            return_tensors="pt",
+        )
+        output_ids = model.generate(
+            **inputs,
+            max_length=eval_cfg["generation_max_length"],
+            num_beams=eval_cfg["generation_num_beams"],
+        )
+        predictions.append(tokenizer.decode(output_ids[0], skip_special_tokens=True))
+
+    return predictions
 
 
 def compute_rouge(predictions: list[str], references: list[str], metrics: list[str]) -> dict[str, float]:
@@ -57,7 +115,33 @@ def compute_rouge(predictions: list[str], references: list[str], metrics: list[s
     Returns:
         Dict mapping each metric name to its aggregate F-measure score.
     """
-    raise NotImplementedError("Implemented in Phase 4/5")
+    rouge = hf_evaluate.load("rouge")
+    scores = rouge.compute(predictions=predictions, references=references, rouge_types=metrics)
+    return {metric: scores[metric] for metric in metrics}
+
+
+def evaluate_checkpoint(checkpoint_path: str, config: dict) -> dict:
+    """Run full ROUGE evaluation for one fine-tuned checkpoint against the test set.
+
+    Args:
+        checkpoint_path: Path to the fine-tuned model checkpoint.
+        config: Full project config, as returned by utils.load_config().
+
+    Returns:
+        {"rouge1", "rouge2", "rougeL", "num_test_examples"}.
+    """
+    processed_dir = PROJECT_ROOT / config["data"]["processed_dir"]
+    test_examples = load_test_set(processed_dir)
+
+    predictions = generate_summaries(test_examples, checkpoint_path, config)
+    references = [example["summary"] for example in test_examples]
+
+    rouge_scores = compute_rouge(predictions, references, config["evaluation"]["metrics"])
+
+    return {
+        **rouge_scores,
+        "num_test_examples": len(test_examples),
+    }
 
 
 def run_evaluation(run_name: str, checkpoint_dir: str, config_path: str = None) -> None:
@@ -69,7 +153,18 @@ def run_evaluation(run_name: str, checkpoint_dir: str, config_path: str = None) 
         checkpoint_dir: Path to the fine-tuned model checkpoint for this run.
         config_path: Optional override for the config file path.
     """
-    raise NotImplementedError("Implemented in Phase 4/5")
+    config = load_config(config_path)
+
+    exp_logger = ExperimentLogger(run_name, config)
+    exp_logger.start_timer("evaluation")
+    result = evaluate_checkpoint(checkpoint_dir, config)
+    exp_logger.stop_timer("evaluation")
+
+    for key, value in result.items():
+        exp_logger.log_metric(key, value)
+
+    exp_logger.save()
+    logger.info("Run '%s' evaluation complete: %s", run_name, result)
 
 
 def parse_args() -> argparse.Namespace:

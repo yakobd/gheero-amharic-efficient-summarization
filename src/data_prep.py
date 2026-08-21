@@ -59,7 +59,22 @@ def main(config_path: str = None) -> None:
     data_cfg = config["data"]
 
     logger.info("Loading %s (%s) ...", data_cfg["dataset_name"], data_cfg["language_config"])
-    dataset = load_dataset(data_cfg["dataset_name"], data_cfg["language_config"])
+    # csebuetnlp/xlsum ships a legacy Python-script loader, which datasets>=4.0
+    # no longer supports. HF auto-converts script-based datasets to Parquet at
+    # revision="refs/convert/parquet", but that revision doesn't expose the
+    # per-language builder configs (e.g. "amharic") — only the raw per-split
+    # parquet files under a <language>/<split>/ path — so we point data_files
+    # at them directly instead of passing language_config as a config name.
+    lang = data_cfg["language_config"]
+    dataset = load_dataset(
+        data_cfg["dataset_name"],
+        data_files={
+            "train": f"{lang}/train/0000.parquet",
+            "validation": f"{lang}/validation/0000.parquet",
+            "test": f"{lang}/test/0000.parquet",
+        },
+        revision="refs/convert/parquet",
+    )
 
     processed_dir = PROJECT_ROOT / data_cfg["processed_dir"]
     min_words = data_cfg["min_article_words"]

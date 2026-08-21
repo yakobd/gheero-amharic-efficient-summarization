@@ -12,7 +12,9 @@ data:
   processed_dir: data/processed
   subsets_dir: data/subsets
   min_article_words: 20
-  max_article_words: 400
+  # p99 cutoff -- outlier removal only; normal truncation handled by
+  # model.max_input_length at train time
+  max_article_words: 1650
   # XL-Sum ships predefined train/validation/test splits; these ratios
   # are recorded for reference only and are not used to re-split the data.
   train_split_ratio: 0.8

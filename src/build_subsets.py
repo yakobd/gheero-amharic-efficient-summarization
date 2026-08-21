@@ -13,25 +13,73 @@ config["experiment_matrix"]:
 
 Each subset is saved to data/subsets/<run_name>.jsonl for train.py to consume.
 
-Scaffolding only for Phase 3 — implemented in Phase 4/5.
+Only the baseline conditions (full_dataset, random_*) are implemented so far.
+build_quality_only_subset, build_diversity_only_subset, and build_combined_subset
+are scaffolding, pending Phase 5 once quality_scoring.py / diversity_clustering.py
+are implemented.
 """
 
+import json
+import logging
+import random
 from pathlib import Path
 from typing import Any
 
+from utils import PROJECT_ROOT, load_config
 
-def build_random_subset(examples: list[dict[str, Any]], fraction: float, seed: int) -> list[dict[str, Any]]:
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+
+def _load_jsonl(path: Path) -> list[dict[str, Any]]:
+    with open(path, "r", encoding="utf-8") as f:
+        return [json.loads(line) for line in f]
+
+
+def _save_jsonl(records: list[dict[str, Any]], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def build_full_dataset_subset() -> list[dict[str, Any]]:
+    """Copy data/processed/train.jsonl unchanged (the 100% ceiling condition).
+
+    Returns:
+        The full list of training examples, as written to data/subsets/full.jsonl.
+    """
+    config = load_config()
+    processed_dir = PROJECT_ROOT / config["data"]["processed_dir"]
+    subsets_dir = PROJECT_ROOT / config["data"]["subsets_dir"]
+
+    examples = _load_jsonl(processed_dir / "train.jsonl")
+    _save_jsonl(examples, subsets_dir / "full.jsonl")
+    return examples
+
+
+def build_random_subset(dataset: list[dict[str, Any]], fraction: float, seed: int) -> list[dict[str, Any]]:
     """Uniformly sample a fraction of examples at random (the random_* baseline conditions).
 
     Args:
-        examples: Full pool of {id, article, summary} dicts to sample from.
-        fraction: Target subset size as a fraction of len(examples), e.g. 0.25.
+        dataset: Full pool of {id, article, summary} dicts to sample from.
+        fraction: Target subset size as a fraction of len(dataset), e.g. 0.25.
         seed: Random seed, config["project"]["seed"].
 
     Returns:
-        The sampled subset of examples.
+        The sampled subset of examples, as written to
+        data/subsets/random_<fraction*100>pct.jsonl.
     """
-    raise NotImplementedError("Implemented in Phase 4/5")
+    config = load_config()
+    subsets_dir = PROJECT_ROOT / config["data"]["subsets_dir"]
+
+    rng = random.Random(seed)
+    n = round(len(dataset) * fraction)
+    subset = rng.sample(dataset, n)
+
+    out_path = subsets_dir / f"random_{int(fraction * 100)}pct.jsonl"
+    _save_jsonl(subset, out_path)
+    return subset
 
 
 def build_quality_only_subset(scored_examples: list[dict[str, Any]], fraction: float) -> list[dict[str, Any]]:
@@ -45,7 +93,7 @@ def build_quality_only_subset(scored_examples: list[dict[str, Any]], fraction: f
     Returns:
         The top-quality subset of examples, with no diversity constraint.
     """
-    raise NotImplementedError("Implemented in Phase 4/5")
+    raise NotImplementedError("Implemented in Phase 5")
 
 
 def build_diversity_only_subset(clustered_examples: list[dict[str, Any]], fraction: float, seed: int) -> list[dict[str, Any]]:
@@ -61,7 +109,7 @@ def build_diversity_only_subset(clustered_examples: list[dict[str, Any]], fracti
         A subset proportionally covering every cluster, with no quality
         preference within clusters.
     """
-    raise NotImplementedError("Implemented in Phase 4/5")
+    raise NotImplementedError("Implemented in Phase 5")
 
 
 def build_combined_subset(scored_and_clustered_examples: list[dict[str, Any]], fraction: float) -> list[dict[str, Any]]:
@@ -79,23 +127,20 @@ def build_combined_subset(scored_and_clustered_examples: list[dict[str, Any]], f
     Returns:
         The combined quality+diversity subset of examples.
     """
-    raise NotImplementedError("Implemented in Phase 4/5")
+    raise NotImplementedError("Implemented in Phase 5")
 
 
-def build_all_subsets(config: dict, processed_dir: Path, subsets_dir: Path) -> None:
-    """Build and save every subset in the 9-run experiment matrix.
+def main(config_path: str = None) -> None:
+    config = load_config(config_path)
+    seed = config["project"]["seed"]
 
-    Iterates config["experiment_matrix"] (subset_sizes x conditions, plus the
-    full_dataset ceiling run) and writes each resulting subset to
-    data/subsets/<run_name>.jsonl.
+    full = build_full_dataset_subset()
+    logger.info("full.jsonl: %d examples", len(full))
 
-    Args:
-        config: Full project config, as returned by utils.load_config().
-        processed_dir: Directory holding data/processed/train.jsonl (source pool).
-        subsets_dir: Output directory, data/subsets/.
-    """
-    raise NotImplementedError("Implemented in Phase 4/5")
+    for fraction in config["experiment_matrix"]["subset_sizes"]:
+        subset = build_random_subset(full, fraction, seed)
+        logger.info("random_%dpct.jsonl: %d examples", int(fraction * 100), len(subset))
 
 
 if __name__ == "__main__":
-    raise NotImplementedError("Implemented in Phase 4/5")
+    main()
