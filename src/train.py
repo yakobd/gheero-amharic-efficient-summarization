@@ -93,6 +93,7 @@ def train_one_run(run_name: str, subset_path: str, config: dict) -> dict:
         warmup_ratio=train_cfg["warmup_ratio"],
         fp16=train_cfg["fp16"],
         save_strategy=train_cfg["save_strategy"],
+        save_total_limit=train_cfg["save_total_limit"],
         eval_strategy=train_cfg["eval_strategy"],
         logging_steps=DEFAULT_LOGGING_STEPS,
     )

@@ -52,7 +52,8 @@ training:
   weight_decay: 0.01
   warmup_ratio: 0.1
   fp16: true
-  save_strategy: epoch
+  save_strategy: "no"
+  save_total_limit: 1
   eval_strategy: epoch
 
 evaluation:
