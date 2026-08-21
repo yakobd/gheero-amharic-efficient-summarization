@@ -1,0 +1,105 @@
+"""Run the full remaining experiment pipeline unattended, end to end.
+
+Intended for Kaggle's "Save & Run All" (background execution), not
+interactive cell-by-cell running: data prep -> subset building -> train +
+evaluate every currently-runnable condition, freeing checkpoint disk space
+between runs and continuing past any single run's failure. Run directly:
+
+    python src/run_all_experiments.py
+"""
+
+import csv
+import shutil
+import traceback
+from datetime import datetime
+from pathlib import Path
+
+import build_subsets
+import data_prep
+import evaluate
+import train
+from utils import PROJECT_ROOT
+
+RUNS = [
+    ("full_dataset", "data/subsets/full.jsonl"),
+    ("random_25pct", "data/subsets/random_25pct.jsonl"),
+    ("random_50pct", "data/subsets/random_50pct.jsonl"),
+    # TODO(Phase 5): quality_only_{25,50}pct, diversity_only_{25,50}pct,
+    # combined_{25,50}pct once quality_scoring.py, diversity_clustering.py,
+    # and build_subsets.py's quality/diversity builders are implemented.
+]
+
+ERROR_LOG_PATH = PROJECT_ROOT / "results" / "logs" / "errors.log"
+SUMMARY_CSV_PATH = PROJECT_ROOT / "results" / "metrics" / "all_runs_summary.csv"
+
+
+def _timestamp() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _dir_size_bytes(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+def _log_error(run_name: str, exc: BaseException) -> None:
+    ERROR_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(ERROR_LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(f"=== {_timestamp()} -- run '{run_name}' failed ===\n")
+        f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+        f.write("\n")
+
+
+def _delete_checkpoint(checkpoint_dir: Path) -> None:
+    if not checkpoint_dir.exists():
+        print(f"No checkpoint dir found at {checkpoint_dir} to delete")
+        return
+
+    freed_bytes = _dir_size_bytes(checkpoint_dir)
+    shutil.rmtree(checkpoint_dir)
+    print(f"Deleted checkpoint dir {checkpoint_dir} (freed {freed_bytes / (1024 ** 2):.1f} MB)")
+
+
+def _print_summary() -> None:
+    print(f"\n=== FINAL SUMMARY ({SUMMARY_CSV_PATH}) ===")
+    if not SUMMARY_CSV_PATH.exists():
+        print(f"No summary file found at {SUMMARY_CSV_PATH}")
+        return
+
+    with open(SUMMARY_CSV_PATH, "r", newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+
+    if not rows:
+        print("(empty)")
+        return
+
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    for row in rows:
+        print(" | ".join(cell.ljust(width) for cell, width in zip(row, widths)))
+
+
+def main() -> None:
+    print(f"[{_timestamp()}] Running data_prep...")
+    data_prep.main()
+
+    print(f"[{_timestamp()}] Running build_subsets...")
+    build_subsets.main()
+
+    for run_name, subset_path in RUNS:
+        print(f"=== STARTING RUN: {run_name} === [{_timestamp()}]")
+        checkpoint_dir = PROJECT_ROOT / "results" / "checkpoints" / run_name
+
+        try:
+            train.run_training(run_name, subset_path)
+            evaluate.run_evaluation(run_name, str(checkpoint_dir))
+            _delete_checkpoint(checkpoint_dir)
+            print(f"=== COMPLETED RUN: {run_name} === [{_timestamp()}]")
+        except Exception as exc:
+            print(f"!!! RUN FAILED: {run_name} -- see {ERROR_LOG_PATH} !!! [{_timestamp()}]")
+            _log_error(run_name, exc)
+            continue
+
+    _print_summary()
+
+
+if __name__ == "__main__":
+    main()
