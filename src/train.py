@@ -121,11 +121,20 @@ def train_one_run(run_name: str, subset_path: str, config: dict) -> dict:
     trainer.save_model(str(output_dir))
     tokenizer.save_pretrained(str(output_dir))
 
-    return {
+    result = {
         "num_train_examples": len(tokenized["train"]),
         "num_epochs_completed": train_result.metrics.get("epoch", train_cfg["num_train_epochs"]),
         "peak_gpu_mem_mb": peak_gpu_mem_mb,
     }
+
+    del trainer
+    del model
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return result
 
 
 def run_training(run_name: str, subset_path: str, config_path: str = None) -> None:

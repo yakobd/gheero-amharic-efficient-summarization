@@ -9,10 +9,13 @@ between runs and continuing past any single run's failure. Run directly:
 """
 
 import csv
+import gc
 import shutil
 import traceback
 from datetime import datetime
 from pathlib import Path
+
+import torch
 
 import build_subsets
 import data_prep
@@ -95,7 +98,13 @@ def main() -> None:
             print(f"=== COMPLETED RUN: {run_name} === [{_timestamp()}]")
         except Exception as exc:
             print(f"!!! RUN FAILED: {run_name} -- see {ERROR_LOG_PATH} !!! [{_timestamp()}]")
+            print(traceback.format_exc())
             _log_error(run_name, exc)
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
             continue
 
     _print_summary()

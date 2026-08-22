@@ -17,6 +17,7 @@ import os
 import sys
 from pathlib import Path
 
+import torch
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from utils import PROJECT_ROOT, ExperimentLogger, load_config
@@ -99,6 +100,12 @@ def generate_summaries(test_examples: list[dict], checkpoint_dir: str, config: d
             num_beams=eval_cfg["generation_num_beams"],
         )
         predictions.append(tokenizer.decode(output_ids[0], skip_special_tokens=True))
+
+    del model
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return predictions
 
