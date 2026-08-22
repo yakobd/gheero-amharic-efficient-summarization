@@ -47,11 +47,12 @@ experiment_matrix:
 
 training:
   num_train_epochs: 6
-  batch_size: 4
+  batch_size: 2
+  gradient_accumulation_steps: 2
   learning_rate: 5.0e-5
   weight_decay: 0.01
   warmup_ratio: 0.1
-  fp16: true
+  fp16: false
   save_strategy: "no"
   save_total_limit: 1
   eval_strategy: epoch
