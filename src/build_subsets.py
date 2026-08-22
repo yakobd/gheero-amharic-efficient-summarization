@@ -25,6 +25,8 @@ import random
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from utils import PROJECT_ROOT, load_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -112,27 +114,93 @@ def build_diversity_only_subset(clustered_examples: list[dict[str, Any]], fracti
     raise NotImplementedError("Implemented in Phase 5")
 
 
-def build_combined_subset(scored_and_clustered_examples: list[dict[str, Any]], fraction: float) -> list[dict[str, Any]]:
-    """Sample proportionally across clusters, prioritizing higher Q1+Q2 examples within each cluster.
+def build_combined_subset(
+    dataset: list[dict[str, Any]],
+    quality_scores: dict[str, dict[str, float]],
+    cluster_assignments: dict[str, int],
+    fraction: float,
+    config: dict,
+) -> list[dict[str, Any]]:
+    """Q2-filter, then Q1-filter, then sample proportionally across clusters.
 
-    This is the full "Quality-Filtered Diverse Sampling" method: diversity
-    (D1) sets how many examples come from each cluster, and quality (Q1+Q2)
-    decides which examples within a cluster are chosen first.
+    This is the full "Quality-Filtered Diverse Sampling" method: first drop
+    low-fidelity pairs (Q2), then keep only examples in the learnable band
+    of the reference-model loss distribution (Q1, percentiles computed over
+    the post-Q2 pool), then sample proportionally across clusters -- using
+    the filtered pool's own cluster proportions -- prioritizing the
+    lowest-q1_loss (most learnable) examples within each cluster when a
+    cluster has more eligible examples than its proportional share.
 
     Args:
-        scored_and_clustered_examples: Examples with "overlap_score", "q1_score",
-            and "cluster_id" fields.
-        fraction: Target subset size as a fraction of len(scored_and_clustered_examples).
+        dataset: Full pool of {id, article, summary} dicts (the original,
+            unfiltered training set).
+        quality_scores: {id: {"q1_loss", "q2_overlap"}}, from
+            quality_scoring.main()'s data/processed/quality_scores.json.
+        cluster_assignments: {id: cluster_label}, from
+            diversity_clustering.main()'s data/processed/diversity_clusters.json.
+        fraction: Target subset size as a fraction of len(dataset), e.g. 0.25.
+        config: Full project config, as returned by utils.load_config().
 
     Returns:
-        The combined quality+diversity subset of examples.
+        The combined quality+diversity subset of examples, as written to
+        data/subsets/combined_<fraction*100>pct.jsonl.
     """
-    raise NotImplementedError("Implemented in Phase 5")
+    qs_cfg = config["quality_scoring"]
+    subsets_dir = PROJECT_ROOT / config["data"]["subsets_dir"]
+
+    target_size = round(len(dataset) * fraction)
+
+    q2_passed = [
+        example for example in dataset if quality_scores[example["id"]]["q2_overlap"] >= qs_cfg["min_overlap_score"]
+    ]
+    n_dropped_q2 = len(dataset) - len(q2_passed)
+
+    q2_losses = np.array([quality_scores[example["id"]]["q1_loss"] for example in q2_passed])
+    lower_bound = np.percentile(q2_losses, qs_cfg["loss_lower_percentile"])
+    upper_bound = np.percentile(q2_losses, qs_cfg["loss_upper_percentile"])
+
+    filtered_pool = [
+        example
+        for example in q2_passed
+        if lower_bound <= quality_scores[example["id"]]["q1_loss"] <= upper_bound
+    ]
+    n_dropped_q1 = len(q2_passed) - len(filtered_pool)
+
+    by_cluster: dict[int, list[dict[str, Any]]] = {}
+    for example in filtered_pool:
+        by_cluster.setdefault(cluster_assignments[example["id"]], []).append(example)
+
+    selected: list[dict[str, Any]] = []
+    for members in by_cluster.values():
+        cluster_quota = round(target_size * len(members) / len(filtered_pool))
+        members_by_learnability = sorted(members, key=lambda ex: quality_scores[ex["id"]]["q1_loss"])
+        selected.extend(members_by_learnability[:cluster_quota])
+
+    out_path = subsets_dir / f"combined_{int(fraction * 100)}pct.jsonl"
+    _save_jsonl(selected, out_path)
+
+    logger.info(
+        "combined_%dpct.jsonl: %d examples (target %d) -- excluded %d at Q2 (overlap < %.2f), "
+        "excluded %d at Q1 (loss outside p%d-p%d band [%.4f, %.4f])",
+        int(fraction * 100),
+        len(selected),
+        target_size,
+        n_dropped_q2,
+        qs_cfg["min_overlap_score"],
+        n_dropped_q1,
+        qs_cfg["loss_lower_percentile"],
+        qs_cfg["loss_upper_percentile"],
+        lower_bound,
+        upper_bound,
+    )
+
+    return selected
 
 
 def main(config_path: str = None) -> None:
     config = load_config(config_path)
     seed = config["project"]["seed"]
+    processed_dir = PROJECT_ROOT / config["data"]["processed_dir"]
 
     full = build_full_dataset_subset()
     logger.info("full.jsonl: %d examples", len(full))
@@ -140,6 +208,15 @@ def main(config_path: str = None) -> None:
     for fraction in config["experiment_matrix"]["subset_sizes"]:
         subset = build_random_subset(full, fraction, seed)
         logger.info("random_%dpct.jsonl: %d examples", int(fraction * 100), len(subset))
+
+    with open(processed_dir / "quality_scores.json", "r", encoding="utf-8") as f:
+        quality_scores = json.load(f)
+    with open(processed_dir / "diversity_clusters.json", "r", encoding="utf-8") as f:
+        cluster_assignments = json.load(f)
+
+    # Scope cut to 25% combined only for now -- not combined_50pct,
+    # quality_only, or diversity_only.
+    build_combined_subset(full, quality_scores, cluster_assignments, fraction=0.25, config=config)
 
 
 if __name__ == "__main__":

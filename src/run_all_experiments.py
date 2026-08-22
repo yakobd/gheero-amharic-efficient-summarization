@@ -1,9 +1,10 @@
 """Run the full remaining experiment pipeline unattended, end to end.
 
 Intended for Kaggle's "Save & Run All" (background execution), not
-interactive cell-by-cell running: data prep -> subset building -> train +
-evaluate every currently-runnable condition, freeing checkpoint disk space
-between runs and continuing past any single run's failure. Run directly:
+interactive cell-by-cell running: data prep -> quality scoring -> diversity
+clustering -> subset building -> train + evaluate every currently-runnable
+condition, freeing checkpoint disk space between runs and continuing past
+any single run's failure. Run directly:
 
     python src/run_all_experiments.py
 
@@ -30,15 +31,17 @@ import torch
 
 import build_subsets
 import data_prep
+import diversity_clustering
+import quality_scoring
 from utils import PROJECT_ROOT
 
 RUNS = [
     ("full_dataset", "data/subsets/full.jsonl"),
     ("random_25pct", "data/subsets/random_25pct.jsonl"),
-    ("random_50pct", "data/subsets/random_50pct.jsonl"),
-    # TODO(Phase 5): quality_only_{25,50}pct, diversity_only_{25,50}pct,
-    # combined_{25,50}pct once quality_scoring.py, diversity_clustering.py,
-    # and build_subsets.py's quality/diversity builders are implemented.
+    ("combined_25pct", "data/subsets/combined_25pct.jsonl"),
+    # TODO(Phase 5+): random_50pct, combined_50pct, quality_only_{25,50}pct,
+    # diversity_only_{25,50}pct once build_subsets.py's quality_only /
+    # diversity_only builders are implemented and scope reopens past 25%.
 ]
 
 ERROR_LOG_PATH = PROJECT_ROOT / "results" / "logs" / "errors.log"
@@ -106,6 +109,12 @@ def _run_evaluate(run_name: str, checkpoint_dir: Path) -> None:
 def main() -> None:
     print(f"[{_timestamp()}] Running data_prep...")
     data_prep.main()
+
+    print(f"[{_timestamp()}] Running quality_scoring...")
+    quality_scoring.main()
+
+    print(f"[{_timestamp()}] Running diversity_clustering...")
+    diversity_clustering.main()
 
     print(f"[{_timestamp()}] Running build_subsets...")
     build_subsets.main()
