@@ -28,7 +28,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 SUMMARIZE_PREFIX = "summarize: "
-Q1_SCORING_BATCH_SIZE = 16
+Q1_SCORING_BATCH_SIZE = 8
 
 
 def compute_q1_learnability_scores(dataset: list[dict[str, Any]], config: dict) -> dict[str, float]:
@@ -45,6 +45,9 @@ def compute_q1_learnability_scores(dataset: list[dict[str, Any]], config: dict) 
     Returns:
         Dict mapping example id -> loss value.
     """
+    import os
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
     model_cfg = config["model"]
     reference_model_name = config["quality_scoring"]["reference_model"]
 
@@ -90,9 +93,19 @@ def compute_q1_learnability_scores(dataset: list[dict[str, Any]], config: dict) 
             for example, loss_value in zip(batch, per_example_loss.tolist()):
                 losses[example["id"]] = loss_value
 
+            del outputs, per_token_loss, valid_mask, model_inputs, label_ids, labels
+            if torch.cuda.is_available() and (start // Q1_SCORING_BATCH_SIZE) % 25 == 0:
+                torch.cuda.empty_cache()
+
             logger.info(
                 "Q1 scoring: %d/%d examples", min(start + Q1_SCORING_BATCH_SIZE, len(dataset)), len(dataset)
             )
+
+    del model
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return losses
 
