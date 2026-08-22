@@ -6,11 +6,21 @@ evaluate every currently-runnable condition, freeing checkpoint disk space
 between runs and continuing past any single run's failure. Run directly:
 
     python src/run_all_experiments.py
+
+train.py and evaluate.py are invoked as separate subprocesses (not imported
+as modules): each run then gets its own CUDA context that's fully released
+on process exit -- covering Trainer-internal state (optimizer, accelerator)
+that manual del/gc.collect()/empty_cache() cleanup can't reach -- and
+evaluate.py's internal sys.modules juggling (to avoid self-shadowing the pip
+`evaluate` package) stays contained to its own process instead of clobbering
+this one.
 """
 
 import csv
 import gc
 import shutil
+import subprocess
+import sys
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -19,8 +29,6 @@ import torch
 
 import build_subsets
 import data_prep
-import evaluate
-import train
 from utils import PROJECT_ROOT
 
 RUNS = [
@@ -80,6 +88,20 @@ def _print_summary() -> None:
         print(" | ".join(cell.ljust(width) for cell, width in zip(row, widths)))
 
 
+def _run_train(run_name: str, subset_path: str) -> None:
+    subprocess.run(
+        [sys.executable, "src/train.py", "--run_name", run_name, "--subset_path", subset_path],
+        check=True,
+    )
+
+
+def _run_evaluate(run_name: str, checkpoint_dir: Path) -> None:
+    subprocess.run(
+        [sys.executable, "src/evaluate.py", "--run_name", run_name, "--checkpoint_dir", str(checkpoint_dir)],
+        check=True,
+    )
+
+
 def main() -> None:
     print(f"[{_timestamp()}] Running data_prep...")
     data_prep.main()
@@ -92,8 +114,11 @@ def main() -> None:
         checkpoint_dir = PROJECT_ROOT / "results" / "checkpoints" / run_name
 
         try:
-            train.run_training(run_name, subset_path)
-            evaluate.run_evaluation(run_name, str(checkpoint_dir))
+            # check=True raises subprocess.CalledProcessError on a non-zero
+            # exit; each run is its own process either way, so GPU memory is
+            # fully released when it exits, whether the run succeeds or fails.
+            _run_train(run_name, subset_path)
+            _run_evaluate(run_name, checkpoint_dir)
             _delete_checkpoint(checkpoint_dir)
             print(f"=== COMPLETED RUN: {run_name} === [{_timestamp()}]")
         except Exception as exc:
