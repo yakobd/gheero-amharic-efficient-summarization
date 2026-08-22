@@ -21,6 +21,7 @@ import gc
 import shutil
 import subprocess
 import sys
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -118,7 +119,9 @@ def main() -> None:
             # exit; each run is its own process either way, so GPU memory is
             # fully released when it exits, whether the run succeeds or fails.
             _run_train(run_name, subset_path)
+            time.sleep(15)
             _run_evaluate(run_name, checkpoint_dir)
+            time.sleep(15)
             _delete_checkpoint(checkpoint_dir)
             print(f"=== COMPLETED RUN: {run_name} === [{_timestamp()}]")
         except Exception as exc:

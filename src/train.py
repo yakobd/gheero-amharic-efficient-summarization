@@ -44,6 +44,9 @@ def train_one_run(run_name: str, subset_path: str, config: dict) -> dict:
     Returns:
         {"num_train_examples", "num_epochs_completed", "peak_gpu_mem_mb"}.
     """
+    import os
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
     model_cfg = config["model"]
     train_cfg = config["training"]
 
